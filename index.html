@@ -1,0 +1,2002 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SOLID SHADOW - 5 STAGES SNEAKING MISSION</title>
+<style>
+  :root {
+    --bg-color: #0b0e14;
+    --panel-color: #161b24;
+    --accent-color: #38ff6a;
+    --danger-color: #ff3838;
+    --text-color: #e2e8f0;
+  }
+  * {
+    box-sizing: border-box;
+    user-select: none;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: 'Courier New', Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  #game-wrapper {
+    position: relative;
+    border: 4px solid #2d3748;
+    border-radius: 4px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.9), 0 0 12px rgba(56, 255, 106, 0.15);
+    background: #000;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+  /* CRT風スキャンライン演出 */
+  #game-wrapper::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      rgba(18, 16, 16, 0) 50%,
+      rgba(0, 0, 0, 0.25) 50%
+    );
+    background-size: 100% 4px;
+    pointer-events: none;
+  }
+  #controls-info {
+    margin-top: 12px;
+    padding: 10px 18px;
+    background: var(--panel-color);
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 640px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    background: #2d3748;
+    border-radius: 3px;
+    color: #fff;
+    font-weight: bold;
+    font-size: 12px;
+  }
+  #gamepad-status {
+    width: 100%;
+    font-size: 12px;
+    color: #94a3b8;
+    border-top: 1px solid #2d3748;
+    padding-top: 6px;
+    margin-top: 2px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .connected {
+    color: var(--accent-color);
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-wrapper">
+  <canvas id="gameCanvas" width="640" height="480"></canvas>
+</div>
+
+<div id="controls-info">
+  <div>
+    <strong>[キーボード]</strong>
+    移動: <span class="badge">↑↓←→</span> / <span class="badge">WASD</span> |
+    パンチ/決定: <span class="badge">Z</span> / <span class="badge">Space</span> |
+    段ボール: <span class="badge">X</span> / <span class="badge">Shift</span> |
+    麻酔銃: <span class="badge">C</span> / <span class="badge">Ctrl</span>
+  </div>
+  <div>
+    <strong>[USBコントローラー]</strong>
+    移動: <span class="badge">十字キー</span> / <span class="badge">左スティック</span> |
+    パンチ: <span class="badge">A / ×</span> |
+    段ボール: <span class="badge">B / ○ / X / □</span> |
+    麻酔銃: <span class="badge">Y / △ / R1</span>
+  </div>
+  <div id="gamepad-status">
+    <span id="gp-text">コントローラー: 未検出（ボタンを押すと認識します）</span>
+    <span>ALL 5 STAGES</span>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const gpText = document.getElementById('gp-text');
+
+  // 画面構成定数
+  const TILE = 32;
+  const COLS = 20; // 20 * 32 = 640px
+  const ROWS = 13; // 13 * 32 = 416px
+  const HUD_HEIGHT = 64; // 下部UI 64px (合計480px)
+
+  // ゲーム状態
+  const STATE = {
+    TITLE: 'TITLE',
+    STAGE_INTRO: 'STAGE_INTRO',
+    PLAYING: 'PLAYING',
+    RESULT: 'RESULT'
+  };
+  let gameState = STATE.TITLE;
+  let stageIntroTimer = 0;
+
+  // ==========================================
+  // Web Audio API レトロサウンドシンセサイザー
+  // ==========================================
+  let audioCtx = null;
+  function initAudio() {
+    if (!audioCtx) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) audioCtx = new AudioContext();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  }
+
+  function playSound(type) {
+    if (!audioCtx) return;
+    const now = audioCtx.currentTime;
+
+    if (type === 'alert') {
+      const freqs = [880, 1174, 1567, 2093];
+      freqs.forEach((f, idx) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(f, now + idx * 0.035);
+        osc.frequency.exponentialRampToValueAtTime(f * 1.15, now + idx * 0.035 + 0.18);
+        gain.gain.setValueAtTime(0.18, now + idx * 0.035);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.035 + 0.25);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + idx * 0.035);
+        osc.stop(now + idx * 0.035 + 0.26);
+      });
+    } else if (type === 'punch') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(180, now);
+      osc.frequency.exponentialRampToValueAtTime(50, now + 0.09);
+      gain.gain.setValueAtTime(0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.09);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
+    } else if (type === 'tranq') {
+      // サプレッサー付き麻酔銃の消音発射音（シュッ）
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(920, now);
+      osc.frequency.exponentialRampToValueAtTime(180, now + 0.065);
+      gain.gain.setValueAtTime(0.16, now);
+      gain.gain.exponentialRampToValueAtTime(0.005, now + 0.065);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.07);
+    } else if (type === 'sleep') {
+      // 麻酔命中・睡眠音
+      const notes = [660, 523.25, 392.0];
+      notes.forEach((f, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(f, now + i * 0.05);
+        gain.gain.setValueAtTime(0.14, now + i * 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.1);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.05);
+        osc.stop(now + i * 0.05 + 0.11);
+      });
+    } else if (type === 'empty') {
+      // 弾切れカチッ音
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(750, now);
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.035);
+    } else if (type === 'hit') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.linearRampToValueAtTime(90, now + 0.14);
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.14);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.15);
+    } else if (type === 'shoot') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    } else if (type === 'item') {
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      notes.forEach((f, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(f, now + i * 0.06);
+        gain.gain.setValueAtTime(0.12, now + i * 0.06);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.1);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.06);
+        osc.stop(now + i * 0.06 + 0.11);
+      });
+    } else if (type === 'box') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(240, now);
+      osc.frequency.setValueAtTime(320, now + 0.05);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.11);
+    } else if (type === 'door') {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.linearRampToValueAtTime(220, now + 0.25);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.26);
+    } else if (type === 'stageclear') {
+      const notes = [440, 554.37, 659.25, 880];
+      notes.forEach((f, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(f, now + i * 0.08);
+        gain.gain.setValueAtTime(0.14, now + i * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.16);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.18);
+      });
+    } else if (type === 'clear') {
+      const melody = [523.25, 659.25, 783.99, 1046.5, 783.99, 1046.5];
+      const times =  [0,      0.12,   0.24,   0.36,   0.52,   0.66];
+      melody.forEach((f, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(f, now + times[i]);
+        gain.gain.setValueAtTime(0.15, now + times[i]);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + times[i] + 0.22);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + times[i]);
+        osc.stop(now + times[i] + 0.24);
+      });
+    } else if (type === 'gameover') {
+      const melody = [392.0, 369.99, 349.23, 329.63, 261.63];
+      melody.forEach((f, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(f, now + i * 0.16);
+        gain.gain.setValueAtTime(0.15, now + i * 0.16);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.16 + 0.2);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.16);
+        osc.stop(now + i * 0.16 + 0.22);
+      });
+    }
+  }
+
+  // ==========================================
+  // 入力管理（キーボード ＆ USBコントローラー統合）
+  // ==========================================
+  const keys = {};
+  window.addEventListener('keydown', (e) => {
+    initAudio();
+    keys[e.code] = true;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    keys[e.code] = false;
+  });
+  window.addEventListener('pointerdown', () => initAudio());
+
+  window.addEventListener('gamepadconnected', (e) => {
+    gpText.innerHTML = `コントローラー: <span class="connected">接続済み (${e.gamepad.id.substring(0, 28)})</span>`;
+  });
+  window.addEventListener('gamepaddisconnected', () => {
+    gpText.textContent = 'コントローラー: 未検出（ボタンを押すと認識します）';
+  });
+
+  const input = {
+    dx: 0,
+    dy: 0,
+    action: false,
+    box: false,
+    shoot: false,
+    start: false,
+    actionJustPressed: false,
+    boxJustPressed: false,
+    shootJustPressed: false,
+    startJustPressed: false,
+    _prevAction: false,
+    _prevBox: false,
+    _prevShoot: false,
+    _prevStart: false
+  };
+
+  function pollInput() {
+    let dx = 0;
+    let dy = 0;
+    let act = false;
+    let box = false;
+    let shoot = false;
+    let start = false;
+
+    if (keys['ArrowLeft'] || keys['KeyA']) dx -= 1;
+    if (keys['ArrowRight'] || keys['KeyD']) dx += 1;
+    if (keys['ArrowUp'] || keys['KeyW']) dy -= 1;
+    if (keys['ArrowDown'] || keys['KeyS']) dy += 1;
+
+    if (keys['KeyZ'] || keys['Space']) act = true;
+    if (keys['KeyX'] || keys['ShiftLeft'] || keys['ShiftRight']) box = true;
+    if (keys['KeyC'] || keys['ControlLeft'] || keys['ControlRight']) shoot = true;
+    if (keys['Enter']) start = true;
+
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (let i = 0; i < gamepads.length; i++) {
+      const gp = gamepads[i];
+      if (!gp) continue;
+
+      if (!gpText.innerHTML.includes('connected')) {
+        gpText.innerHTML = `コントローラー: <span class="connected">接続済み (${gp.id.substring(0, 28)})</span>`;
+      }
+
+      if (gp.buttons[14] && gp.buttons[14].pressed) dx -= 1;
+      if (gp.buttons[15] && gp.buttons[15].pressed) dx += 1;
+      if (gp.buttons[12] && gp.buttons[12].pressed) dy -= 1;
+      if (gp.buttons[13] && gp.buttons[13].pressed) dy += 1;
+
+      const DEADZONE = 0.3;
+      if (gp.axes && gp.axes.length >= 2) {
+        if (Math.abs(gp.axes[0]) > DEADZONE) dx += gp.axes[0];
+        if (Math.abs(gp.axes[1]) > DEADZONE) dy += gp.axes[1];
+      }
+
+      if (gp.buttons[0] && gp.buttons[0].pressed) { act = true; initAudio(); }
+      if ((gp.buttons[1] && gp.buttons[1].pressed) ||
+          (gp.buttons[2] && gp.buttons[2].pressed)) { box = true; initAudio(); }
+      if ((gp.buttons[3] && gp.buttons[3].pressed) ||
+          (gp.buttons[5] && gp.buttons[5].pressed)) { shoot = true; initAudio(); }
+      if (gp.buttons[9] && gp.buttons[9].pressed) { start = true; initAudio(); }
+    }
+
+    const mag = Math.hypot(dx, dy);
+    if (mag > 1) {
+      dx /= mag;
+      dy /= mag;
+    }
+
+    input.dx = dx;
+    input.dy = dy;
+    input.action = act;
+    input.box = box;
+    input.shoot = shoot;
+    input.start = start;
+
+    input.actionJustPressed = act && !input._prevAction;
+    input.boxJustPressed = box && !input._prevBox;
+    input.shootJustPressed = shoot && !input._prevShoot;
+    input.startJustPressed = start && !input._prevStart;
+
+    input._prevAction = act;
+    input._prevBox = box;
+    input._prevShoot = shoot;
+    input._prevStart = start;
+  }
+
+  // ==========================================
+  // 全5ステージ定義（徐々に難易度が上昇）
+  // 記号:
+  // '#' : コンクリート壁
+  // 'C' : コンテナ/クレート（視線を遮る遮蔽物）
+  // 'D' : カードキーロック扉（解錠時に麻酔銃3発を入手）
+  // 'G' : 出口（EXIT / 最終GOAL）
+  // '.' : 床
+  // ==========================================
+  const STAGE_TEMPLATES = [
+    // STAGE 1: 入門ステージ（巡回兵2名・ゆっくり・C.BOX入手）
+    {
+      stageNum: 1,
+      title: "STAGE 1: INFILTRATION DOCK",
+      subtitle: "潜入ドック - 敵兵の巡回ルートを見極めて右奥のEXITへ進め",
+      playerStart: { x: 2.0, y: 6.5 },
+      visionDist: 145,
+      visionAngleDeg: 30,
+      map: [
+        "####################",
+        "#..................#",
+        "#..CC..........CC..#",
+        "#..CC..........CC..#",
+        "#..................#",
+        "#......######......#",
+        "#......#....#.....G#",
+        "#......#....#.....G#",
+        "#..................#",
+        "#..CC..........CC..#",
+        "#..CC..........CC..#",
+        "#..................#",
+        "####################"
+      ],
+      items: [
+        { type: 'BOX', x: 2.5 * TILE, y: 11.0 * TILE, label: 'C.BOX' }
+      ],
+      enemies: [
+        {
+          waypoints: [
+            { x: 6.5, y: 1.5, wait: 0.5 },
+            { x: 15.5, y: 1.5, wait: 0.5 },
+            { x: 15.5, y: 4.5, wait: 0.5 },
+            { x: 6.5, y: 4.5, wait: 0.5 }
+          ],
+          speed: 62
+        },
+        {
+          waypoints: [
+            { x: 15.5, y: 11.5, wait: 0.5 },
+            { x: 6.5, y: 11.5, wait: 0.5 },
+            { x: 6.5, y: 8.5, wait: 0.5 },
+            { x: 15.5, y: 8.5, wait: 0.5 }
+          ],
+          speed: 62
+        }
+      ]
+    },
+
+    // STAGE 2: 資材倉庫（巡回兵3名・中速・中央と外周の連携パトロール）
+    {
+      stageNum: 2,
+      title: "STAGE 2: SUPPLY WAREHOUSE",
+      subtitle: "資材倉庫 - コンテナの死角を使い、3人の巡回兵をやり過ごせ",
+      playerStart: { x: 1.5, y: 1.5 },
+      visionDist: 160,
+      visionAngleDeg: 32,
+      map: [
+        "####################",
+        "#......#...........#",
+        "#..CC..#...CC..CC..#",
+        "#..CC......CC..CC..#",
+        "#..................#",
+        "#..####......####..#",
+        "#..................#",
+        "#..####......####..#",
+        "#..................#",
+        "#..CC..CC......CC..#",
+        "#..CC..CC..#...CC.G#",
+        "#..........#......G#",
+        "####################"
+      ],
+      items: [
+        { type: 'RATION', x: 18.0 * TILE, y: 1.5 * TILE, label: 'RATION' }
+      ],
+      enemies: [
+        {
+          waypoints: [
+            { x: 5.5, y: 4.5, wait: 0.4 },
+            { x: 5.5, y: 8.5, wait: 0.4 },
+            { x: 1.5, y: 8.5, wait: 0.6 },
+            { x: 5.5, y: 8.5, wait: 0.2 }
+          ],
+          speed: 74
+        },
+        {
+          waypoints: [
+            { x: 8.5, y: 4.5, wait: 0.4 },
+            { x: 13.5, y: 4.5, wait: 0.4 },
+            { x: 13.5, y: 8.5, wait: 0.4 },
+            { x: 8.5, y: 8.5, wait: 0.4 }
+          ],
+          speed: 78
+        },
+        {
+          waypoints: [
+            { x: 16.5, y: 2.5, wait: 0.6 },
+            { x: 16.5, y: 8.5, wait: 0.6 }
+          ],
+          speed: 80
+        }
+      ]
+    },
+
+    // STAGE 3: セキュリティ区画（巡回兵3名・カードキーでロック扉解錠＆麻酔銃入手）
+    {
+      stageNum: 3,
+      title: "STAGE 3: SECURITY SECTOR",
+      subtitle: "警備区画 - 北東の部屋で「CARD KEY」を奪取し、南東のロック扉を開け！",
+      playerStart: { x: 1.5, y: 6.5 },
+      visionDist: 170,
+      visionAngleDeg: 34,
+      map: [
+        "####################",
+        "#..........#.......#",
+        "#..CC..CC..#..CC...#",
+        "#..CC..CC.....CC...#",
+        "#..........#.......#",
+        "#..######..######..#",
+        "#..................#",
+        "#..######..######..#",
+        "#..........#....D..#",
+        "#..CC..CC..#....D.G#",
+        "#..CC..CC..######.G#",
+        "#..................#",
+        "####################"
+      ],
+      items: [
+        { type: 'CARD', x: 18.0 * TILE, y: 1.8 * TILE, label: 'CARD KEY' },
+        { type: 'RATION', x: 2.0 * TILE, y: 11.2 * TILE, label: 'RATION' }
+      ],
+      enemies: [
+        {
+          waypoints: [
+            { x: 4.5, y: 1.5, wait: 0.3 },
+            { x: 9.5, y: 1.5, wait: 0.3 },
+            { x: 9.5, y: 11.5, wait: 0.3 },
+            { x: 4.5, y: 11.5, wait: 0.3 }
+          ],
+          speed: 84
+        },
+        {
+          waypoints: [
+            { x: 3.5, y: 6.5, wait: 0.5 },
+            { x: 17.5, y: 6.5, wait: 0.5 }
+          ],
+          speed: 88
+        },
+        {
+          waypoints: [
+            { x: 12.5, y: 1.5, wait: 0.4 },
+            { x: 16.5, y: 1.5, wait: 0.4 },
+            { x: 16.5, y: 4.3, wait: 0.4 },
+            { x: 12.5, y: 4.3, wait: 0.4 }
+          ],
+          speed: 84
+        }
+      ]
+    },
+
+    // STAGE 4: 兵器研究棟（巡回兵4名・高速＆広い視界）
+    {
+      stageNum: 4,
+      title: "STAGE 4: WEAPONS LAB",
+      subtitle: "兵器研究棟 - 視界の広いエリート兵4名が高速巡回している！",
+      playerStart: { x: 1.5, y: 11.0 },
+      visionDist: 185,
+      visionAngleDeg: 37,
+      map: [
+        "####################",
+        "#.................G#",
+        "#..####..####..##.G#",
+        "#..#...........##..#",
+        "#..#..CC....CC.....#",
+        "#.....CC....CC..#..#",
+        "#...............#..#",
+        "#..#..CC....CC..#..#",
+        "#..#..CC....CC.....#",
+        "#..#...............#",
+        "#..####..####..###.#",
+        "#..................#",
+        "####################"
+      ],
+      items: [
+        { type: 'RATION', x: 9.5 * TILE, y: 6.5 * TILE, label: 'RATION' }
+      ],
+      enemies: [
+        {
+          waypoints: [
+            { x: 5.5, y: 11.5, wait: 0.3 },
+            { x: 16.5, y: 11.5, wait: 0.3 },
+            { x: 16.5, y: 9.3, wait: 0.3 },
+            { x: 5.5, y: 9.3, wait: 0.3 }
+          ],
+          speed: 94
+        },
+        {
+          waypoints: [
+            { x: 1.5, y: 1.5, wait: 0.4 },
+            { x: 15.5, y: 1.5, wait: 0.4 }
+          ],
+          speed: 98
+        },
+        {
+          waypoints: [
+            { x: 4.8, y: 3.5, wait: 0.3 },
+            { x: 9.5, y: 3.5, wait: 0.3 },
+            { x: 9.5, y: 9.3, wait: 0.3 },
+            { x: 4.8, y: 9.3, wait: 0.3 }
+          ],
+          speed: 92
+        },
+        {
+          waypoints: [
+            { x: 15.0, y: 3.5, wait: 0.3 },
+            { x: 15.0, y: 8.5, wait: 0.3 },
+            { x: 18.3, y: 8.5, wait: 0.4 },
+            { x: 15.0, y: 8.5, wait: 0.2 }
+          ],
+          speed: 96
+        }
+      ]
+    },
+
+    // STAGE 5: 最終ステージ・コマンドコア（巡回兵5名＋カードキー解錠＆麻酔銃入手＋最高難度）
+    {
+      stageNum: 5,
+      title: "FINAL STAGE: COMMAND CORE",
+      subtitle: "中枢司令部 - 5人の精鋭部隊を突破し、CARD KEYで最終GOALを解錠せよ！",
+      playerStart: { x: 1.5, y: 6.5 },
+      visionDist: 195,
+      visionAngleDeg: 39,
+      map: [
+        "####################",
+        "#........#.........#",
+        "#..####..#..####...#",
+        "#..#...........#...#",
+        "#..#..CC...CC..#...#",
+        "#.....CC...CC....###",
+        "#................DG#",
+        "#.....CC...CC....DG#",
+        "#..#..CC...CC..#.###",
+        "#..#...........#...#",
+        "#..####..#..####...#",
+        "#........#.........#",
+        "####################"
+      ],
+      items: [
+        { type: 'CARD', x: 18.2 * TILE, y: 1.5 * TILE, label: 'CARD KEY' },
+        { type: 'RATION', x: 18.2 * TILE, y: 11.5 * TILE, label: 'RATION' },
+        { type: 'BOX', x: 1.5 * TILE, y: 1.5 * TILE, label: 'C.BOX' }
+      ],
+      enemies: [
+        {
+          waypoints: [
+            { x: 1.5, y: 3.5, wait: 0.2 },
+            { x: 1.5, y: 1.5, wait: 0.2 },
+            { x: 7.5, y: 1.5, wait: 0.2 },
+            { x: 7.5, y: 3.5, wait: 0.2 },
+            { x: 4.5, y: 3.5, wait: 0.2 }
+          ],
+          speed: 98
+        },
+        {
+          waypoints: [
+            { x: 7.5, y: 11.5, wait: 0.2 },
+            { x: 1.5, y: 11.5, wait: 0.2 },
+            { x: 1.5, y: 9.5, wait: 0.2 },
+            { x: 7.5, y: 9.5, wait: 0.2 }
+          ],
+          speed: 98
+        },
+        {
+          waypoints: [
+            { x: 4.5, y: 6.5, wait: 0.25 },
+            { x: 9.5, y: 3.5, wait: 0.25 },
+            { x: 14.2, y: 6.5, wait: 0.25 },
+            { x: 9.5, y: 9.5, wait: 0.25 }
+          ],
+          speed: 104
+        },
+        {
+          waypoints: [
+            { x: 10.5, y: 1.5, wait: 0.3 },
+            { x: 17.5, y: 1.5, wait: 0.3 },
+            { x: 17.5, y: 4.3, wait: 0.3 },
+            { x: 16.5, y: 1.5, wait: 0.2 }
+          ],
+          speed: 102
+        },
+        {
+          waypoints: [
+            { x: 10.5, y: 11.5, wait: 0.3 },
+            { x: 17.5, y: 11.5, wait: 0.3 },
+            { x: 17.5, y: 9.2, wait: 0.3 },
+            { x: 15.8, y: 6.5, wait: 0.4 },
+            { x: 17.5, y: 9.2, wait: 0.2 },
+            { x: 17.5, y: 11.5, wait: 0.2 }
+          ],
+          speed: 102
+        }
+      ]
+    }
+  ];
+
+  // ==========================================
+  // ゲーム本編データ
+  // ==========================================
+  let currentStageIndex = 0;
+  let currentStage = null;
+  let alertTimer = 0;
+  let messageText = "";
+  let messageTimer = 0;
+
+  const stats = {
+    time: 0,
+    alerts: 0,
+    knockouts: 0,
+    cleared: false,
+    reachedStage: 1
+  };
+
+  const player = {
+    x: 0,
+    y: 0,
+    radius: 10,
+    speed: 138,
+    angle: 0,
+    hp: 100,
+    maxHp: 100,
+    invincibleTimer: 0,
+    hasBox: false,
+    inBox: false,
+    hasCard: false,
+    hasTranq: false,
+    tranqAmmo: 0,
+    maxTranqAmmo: 3,
+    shootCooldown: 0,
+    punchTimer: 0,
+    punchCooldown: 0,
+    isMoving: false
+  };
+
+  let bullets = [];
+  let tranqDarts = [];
+  let particles = [];
+
+  // ゲーム新規開始
+  function startNewGame() {
+    player.hp = 100;
+    player.hasBox = false;
+    player.inBox = false;
+    player.hasTranq = false;
+    player.tranqAmmo = 0;
+
+    stats.time = 0;
+    stats.alerts = 0;
+    stats.knockouts = 0;
+    stats.cleared = false;
+    stats.reachedStage = 1;
+
+    loadStage(0);
+  }
+
+  // 指定ステージの読み込み
+  function loadStage(stageIdx) {
+    currentStageIndex = stageIdx;
+    const tpl = STAGE_TEMPLATES[stageIdx];
+    stats.reachedStage = tpl.stageNum;
+
+    const grid = tpl.map.map(row => row.split(''));
+    const items = tpl.items
+      .filter(it => !(it.type === 'BOX' && player.hasBox))
+      .map(it => ({ ...it, collected: false }));
+
+    const enemies = tpl.enemies.map(en => {
+      const wps = en.waypoints.map(w => ({
+        x: w.x * TILE,
+        y: w.y * TILE,
+        wait: w.wait !== undefined ? w.wait : 0.4
+      }));
+      const startWp = wps[0];
+      const nextWp = wps[1 % wps.length];
+      return {
+        x: startWp.x,
+        y: startWp.y,
+        waypoints: wps,
+        wpIndex: 1 % wps.length,
+        waitTimer: 0,
+        speed: en.speed,
+        angle: Math.atan2(nextWp.y - startWp.y, nextWp.x - startWp.x),
+        stunTimer: 0,
+        isAsleep: false,
+        shootCooldown: 0.75,
+        surpriseTimer: 0,
+        wasAlerted: false
+      };
+    });
+
+    const hasDoorInStage = tpl.map.some(r => r.includes('D'));
+
+    currentStage = {
+      stageNum: tpl.stageNum,
+      title: tpl.title,
+      subtitle: tpl.subtitle,
+      visionDist: tpl.visionDist,
+      visionHalfAngle: (tpl.visionAngleDeg * Math.PI) / 180,
+      hasDoorInStage,
+      grid,
+      items,
+      enemies
+    };
+
+    player.x = tpl.playerStart.x * TILE;
+    player.y = tpl.playerStart.y * TILE;
+    player.angle = 0;
+    player.invincibleTimer = 0;
+    player.inBox = false;
+    player.hasCard = false;
+    player.shootCooldown = 0;
+    player.punchTimer = 0;
+    player.punchCooldown = 0;
+
+    alertTimer = 0;
+    bullets = [];
+    tranqDarts = [];
+    particles = [];
+
+    showMessage(tpl.subtitle, 4.5);
+    stageIntroTimer = 1.8;
+    gameState = STATE.STAGE_INTRO;
+  }
+
+  function showMessage(msg, duration = 3.0) {
+    messageText = msg;
+    messageTimer = duration;
+  }
+
+  // ==========================================
+  // 衝突判定 ＆ 視線レイキャスト
+  // ==========================================
+  function getTileAt(grid, tx, ty) {
+    if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return '#';
+    return grid[ty][tx];
+  }
+
+  function isSolidTile(ch) {
+    return ch === '#' || ch === 'C' || ch === 'D';
+  }
+
+  function isVisionBlocker(ch) {
+    return ch === '#' || ch === 'C' || ch === 'D';
+  }
+
+  function moveWithCollision(entity, vx, vy, dt, grid, canUnlockDoor = false) {
+    const r = entity.radius || 10;
+
+    // X軸移動
+    let nextX = entity.x + vx * dt;
+    const minTy1 = Math.floor((entity.y - r) / TILE);
+    const maxTy1 = Math.floor((entity.y + r) / TILE);
+    const checkTx = vx > 0 ? Math.floor((nextX + r) / TILE) : Math.floor((nextX - r) / TILE);
+
+    let hitX = false;
+    for (let ty = minTy1; ty <= maxTy1; ty++) {
+      const ch = getTileAt(grid, checkTx, ty);
+      if (ch === 'D' && canUnlockDoor) {
+        if (player.hasCard) {
+          unlockAllDoors(grid);
+        } else {
+          showMessage("ロック扉だ！このステージ内の「CARD KEY」を入手せよ", 2.0);
+          hitX = true;
+        }
+      } else if (isSolidTile(ch)) {
+        hitX = true;
+      }
+    }
+    if (!hitX) {
+      entity.x = nextX;
+    } else {
+      if (vx > 0) entity.x = checkTx * TILE - r - 0.01;
+      else if (vx < 0) entity.x = (checkTx + 1) * TILE + r + 0.01;
+    }
+
+    // Y軸移動
+    let nextY = entity.y + vy * dt;
+    const minTx2 = Math.floor((entity.x - r) / TILE);
+    const maxTx2 = Math.floor((entity.x + r) / TILE);
+    const checkTy = vy > 0 ? Math.floor((nextY + r) / TILE) : Math.floor((nextY - r) / TILE);
+
+    let hitY = false;
+    for (let tx = minTx2; tx <= maxTx2; tx++) {
+      const ch = getTileAt(grid, tx, checkTy);
+      if (ch === 'D' && canUnlockDoor) {
+        if (player.hasCard) {
+          unlockAllDoors(grid);
+        } else {
+          showMessage("ロック扉だ！このステージ内の「CARD KEY」を入手せよ", 2.0);
+          hitY = true;
+        }
+      } else if (isSolidTile(ch)) {
+        hitY = true;
+      }
+    }
+    if (!hitY) {
+      entity.y = nextY;
+    } else {
+      if (vy > 0) entity.y = checkTy * TILE - r - 0.01;
+      else if (vy < 0) entity.y = (checkTy + 1) * TILE + r + 0.01;
+    }
+  }
+
+  // カードキーでロック扉を開けると同時に「麻酔銃（3発）」を入手
+  function unlockAllDoors(grid) {
+    let opened = false;
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (grid[y][x] === 'D') {
+          grid[y][x] = '.';
+          opened = true;
+        }
+      }
+    }
+    if (opened) {
+      playSound('door');
+      setTimeout(() => playSound('item'), 160);
+      player.hasTranq = true;
+      player.tranqAmmo = player.maxTranqAmmo; // 3発装填
+      spawnParticles(player.x, player.y, '#38bdf8', 14);
+      showMessage("ロック扉解錠＆【麻酔銃(3発)】入手！[C / Ctrl / Yボタン]で遠距離から敵を眠らせろ！", 4.5);
+    }
+  }
+
+  function castVisionRay(grid, startX, startY, angle, maxDist) {
+    const step = 4;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    for (let d = 0; d <= maxDist; d += step) {
+      const px = startX + cos * d;
+      const py = startY + sin * d;
+      const tx = Math.floor(px / TILE);
+      const ty = Math.floor(py / TILE);
+      if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return d;
+      if (isVisionBlocker(grid[ty][tx])) return d;
+    }
+    return maxDist;
+  }
+
+  function hasLineOfSight(grid, x1, y1, x2, y2) {
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const hitDist = castVisionRay(grid, x1, y1, angle, dist);
+    return hitDist >= dist - 4;
+  }
+
+  function normalizeAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+
+  function findBestPatrolWaypoint(en, grid) {
+    let bestIdx = en.wpIndex;
+    let bestDist = Infinity;
+    en.waypoints.forEach((wp, idx) => {
+      const d = Math.hypot(wp.x - en.x, wp.y - en.y);
+      const los = hasLineOfSight(grid, en.x, en.y, wp.x, wp.y);
+      const score = los ? d : d + 500;
+      if (score < bestDist) {
+        bestDist = score;
+        bestIdx = idx;
+      }
+    });
+    return bestIdx;
+  }
+
+  function triggerAlert(spottedEnemy) {
+    if (alertTimer <= 0) {
+      stats.alerts++;
+      playSound('alert');
+      showMessage("！ 敵兵に発見された！ 物陰に隠れて視線を切り、警戒解除を待て！", 3.0);
+    }
+    alertTimer = 6.5;
+    if (spottedEnemy) {
+      spottedEnemy.surpriseTimer = 1.0;
+    }
+  }
+
+  function spawnParticles(x, y, color, count = 8) {
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 30 + Math.random() * 90;
+      particles.push({
+        x, y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd,
+        life: 0.25 + Math.random() * 0.2,
+        color
+      });
+    }
+  }
+
+  // ==========================================
+  // メイン更新処理
+  // ==========================================
+  function updatePlaying(dt) {
+    stats.time += dt;
+    if (messageTimer > 0) messageTimer -= dt;
+    if (player.invincibleTimer > 0) player.invincibleTimer -= dt;
+    if (player.punchTimer > 0) player.punchTimer -= dt;
+    if (player.punchCooldown > 0) player.punchCooldown -= dt;
+    if (player.shootCooldown > 0) player.shootCooldown -= dt;
+
+    const grid = currentStage.grid;
+
+    // 段ボール切り替え
+    if (input.boxJustPressed) {
+      if (player.hasBox) {
+        player.inBox = !player.inBox;
+        playSound('box');
+      } else {
+        showMessage("まだ段ボール箱（C.BOX）を持っていない！", 1.8);
+      }
+    }
+
+    // 麻酔銃発射（サプレッサー付き・3発限定）
+    if (input.shootJustPressed && player.shootCooldown <= 0) {
+      if (!player.hasTranq) {
+        showMessage("麻酔銃を所持していない！", 1.8);
+      } else if (player.tranqAmmo <= 0) {
+        playSound('empty');
+        showMessage("麻酔銃の弾（3発）は使い切った！", 1.8);
+      } else {
+        if (player.inBox) player.inBox = false;
+        player.tranqAmmo--;
+        player.shootCooldown = 0.35;
+        playSound('tranq');
+        tranqDarts.push({
+          x: player.x + Math.cos(player.angle) * 14,
+          y: player.y + Math.sin(player.angle) * 14,
+          vx: Math.cos(player.angle) * 430,
+          vy: Math.sin(player.angle) * 430,
+          angle: player.angle
+        });
+        showMessage(`麻酔弾発射！（残り ${player.tranqAmmo} / ${player.maxTranqAmmo} 発）`, 1.5);
+      }
+    }
+
+    // パンチ攻撃
+    if (input.actionJustPressed && player.punchCooldown <= 0) {
+      if (player.inBox) player.inBox = false;
+      player.punchTimer = 0.16;
+      player.punchCooldown = 0.35;
+      playSound('punch');
+
+      const px = player.x + Math.cos(player.angle) * 22;
+      const py = player.y + Math.sin(player.angle) * 22;
+      currentStage.enemies.forEach(en => {
+        if (en.stunTimer <= 0 && Math.hypot(en.x - px, en.y - py) < 25) {
+          en.stunTimer = 7.5; // 7.5秒気絶
+          en.isAsleep = false;
+          stats.knockouts++;
+          spawnParticles(en.x, en.y, '#fbbf24', 12);
+          playSound('hit');
+        }
+      });
+    }
+
+    // プレイヤー移動
+    player.isMoving = Math.hypot(input.dx, input.dy) > 0.05;
+    if (player.punchTimer <= 0 && player.isMoving) {
+      player.angle = Math.atan2(input.dy, input.dx);
+      const currentSpeed = player.inBox ? player.speed * 0.62 : player.speed;
+      moveWithCollision(player, input.dx * currentSpeed, input.dy * currentSpeed, dt, grid, true);
+    }
+
+    // アイテム取得
+    currentStage.items.forEach(it => {
+      if (!it.collected && Math.hypot(player.x - it.x, player.y - it.y) < 22) {
+        it.collected = true;
+        playSound('item');
+        if (it.type === 'BOX') {
+          player.hasBox = true;
+          showMessage("「C.BOX」入手！[X/Shift]または[Bボタン]で被り静止すると視界を欺ける！", 4.0);
+        } else if (it.type === 'CARD') {
+          player.hasCard = true;
+          showMessage("「CARD KEY」入手！赤いロック扉に触れると解錠＆武器を入手できるぞ！", 3.5);
+        } else if (it.type === 'RATION') {
+          player.hp = Math.min(player.maxHp, player.hp + 45);
+          showMessage("「RATION」使用！LIFEが回復した！", 2.5);
+        }
+      }
+    });
+
+    // 出口（EXIT / GOAL）到達判定
+    const ptx = Math.floor(player.x / TILE);
+    const pty = Math.floor(player.y / TILE);
+    if (getTileAt(grid, ptx, pty) === 'G') {
+      if (alertTimer > 0) {
+        showMessage("警戒中（ALERT）は出口へ進めない！敵の視線を切って隠れろ！", 1.5);
+      } else {
+        if (currentStageIndex + 1 < STAGE_TEMPLATES.length) {
+          playSound('stageclear');
+          player.hp = Math.min(player.maxHp, player.hp + 20);
+          loadStage(currentStageIndex + 1);
+          return;
+        } else {
+          stats.cleared = true;
+          playSound('clear');
+          gameState = STATE.RESULT;
+          return;
+        }
+      }
+    }
+
+    // 警戒タイマー更新
+    const prevAlert = alertTimer;
+    if (alertTimer > 0) {
+      alertTimer -= dt;
+      if (alertTimer <= 0) {
+        alertTimer = 0;
+        if (prevAlert > 0) {
+          showMessage("敵兵は巡回に戻った（ALERT解除）", 2.2);
+        }
+      }
+    }
+
+    // 敵兵の巡回＆追跡AI更新
+    const VISION_DIST = currentStage.visionDist;
+    const VISION_HALF_ANGLE = currentStage.visionHalfAngle;
+
+    currentStage.enemies.forEach(en => {
+      if (en.surpriseTimer > 0) en.surpriseTimer -= dt;
+
+      if (en.stunTimer > 0) {
+        en.stunTimer -= dt;
+        if (en.stunTimer <= 0) {
+          en.isAsleep = false;
+        }
+        return;
+      }
+
+      const distToPlayer = Math.hypot(player.x - en.x, player.y - en.y);
+      const angleToPlayer = Math.atan2(player.y - en.y, player.x - en.x);
+      const angleDiff = Math.abs(normalizeAngle(angleToPlayer - en.angle));
+
+      const disguisedSafe = player.inBox && !player.isMoving && alertTimer <= 0;
+      const touchingEnemy = distToPlayer < (player.radius + 12);
+
+      let canSeePlayer = false;
+      if (touchingEnemy) {
+        canSeePlayer = true;
+        if (player.inBox) player.inBox = false;
+      } else if (distToPlayer <= VISION_DIST && angleDiff <= VISION_HALF_ANGLE && !disguisedSafe) {
+        if (hasLineOfSight(grid, en.x, en.y, player.x, player.y)) {
+          canSeePlayer = true;
+        }
+      }
+
+      if (canSeePlayer) {
+        triggerAlert(en);
+      }
+
+      if (alertTimer > 0) {
+        en.wasAlerted = true;
+        const hasLOS = hasLineOfSight(grid, en.x, en.y, player.x, player.y);
+
+        if (hasLOS) {
+          alertTimer = Math.max(alertTimer, 4.0);
+          en.angle = angleToPlayer;
+          if (distToPlayer > 64) {
+            const chaseSpeed = en.speed * 1.25;
+            moveWithCollision(
+              en,
+              Math.cos(angleToPlayer) * chaseSpeed,
+              Math.sin(angleToPlayer) * chaseSpeed,
+              dt,
+              grid,
+              false
+            );
+          }
+          en.shootCooldown -= dt;
+          if (en.shootCooldown <= 0 && distToPlayer < 290) {
+            en.shootCooldown = Math.max(0.55, 0.9 - currentStageIndex * 0.06);
+            playSound('shoot');
+            bullets.push({
+              x: en.x + Math.cos(en.angle) * 14,
+              y: en.y + Math.sin(en.angle) * 14,
+              vx: Math.cos(en.angle) * (275 + currentStageIndex * 15),
+              vy: Math.sin(en.angle) * (275 + currentStageIndex * 15)
+            });
+          }
+        } else {
+          patrolStep(en, dt, grid, 1.15);
+        }
+      } else {
+        if (en.wasAlerted) {
+          en.wasAlerted = false;
+          en.wpIndex = findBestPatrolWaypoint(en, grid);
+        }
+        patrolStep(en, dt, grid, 1.0);
+      }
+
+      if (touchingEnemy && player.invincibleTimer <= 0) {
+        damagePlayer(15);
+      }
+    });
+
+    // プレイヤーの麻酔弾の更新
+    for (let i = tranqDarts.length - 1; i >= 0; i--) {
+      const d = tranqDarts[i];
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+
+      const tx = Math.floor(d.x / TILE);
+      const ty = Math.floor(d.y / TILE);
+      if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS || isSolidTile(grid[ty][tx])) {
+        spawnParticles(d.x, d.y, '#38bdf8', 5);
+        tranqDarts.splice(i, 1);
+        continue;
+      }
+
+      let hitEnemy = false;
+      for (let j = 0; j < currentStage.enemies.length; j++) {
+        const en = currentStage.enemies[j];
+        if (Math.hypot(d.x - en.x, d.y - en.y) < 15) {
+          if (en.stunTimer <= 0) {
+            stats.knockouts++;
+          }
+          en.stunTimer = 12.0; // 麻酔銃は12秒間眠らせる
+          en.isAsleep = true;
+          spawnParticles(en.x, en.y, '#38bdf8', 12);
+          playSound('sleep');
+          hitEnemy = true;
+          break;
+        }
+      }
+      if (hitEnemy) {
+        tranqDarts.splice(i, 1);
+      }
+    }
+
+    // 敵弾丸の更新
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+
+      const tx = Math.floor(b.x / TILE);
+      const ty = Math.floor(b.y / TILE);
+      if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS || isSolidTile(grid[ty][tx])) {
+        spawnParticles(b.x, b.y, '#94a3b8', 4);
+        bullets.splice(i, 1);
+        continue;
+      }
+
+      if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + 3) {
+        bullets.splice(i, 1);
+        if (player.invincibleTimer <= 0) {
+          if (player.inBox) player.inBox = false;
+          damagePlayer(20);
+        }
+      }
+    }
+
+    // パーティクル更新
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.life -= dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function patrolStep(en, dt, grid, speedMult) {
+    const target = en.waypoints[en.wpIndex];
+    const dx = target.x - en.x;
+    const dy = target.y - en.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (en.waitTimer > 0) {
+      en.waitTimer -= dt;
+      const nextWp = en.waypoints[(en.wpIndex + 1) % en.waypoints.length];
+      const nextAngle = Math.atan2(nextWp.y - en.y, nextWp.x - en.x);
+      const diff = normalizeAngle(nextAngle - en.angle);
+      en.angle += Math.sign(diff) * Math.min(Math.abs(diff), 4.5 * dt);
+
+      if (en.waitTimer <= 0) {
+        en.wpIndex = (en.wpIndex + 1) % en.waypoints.length;
+      }
+      return;
+    }
+
+    if (dist < 6) {
+      en.x = target.x;
+      en.y = target.y;
+      en.waitTimer = target.wait || 0.35;
+    } else {
+      const targetAngle = Math.atan2(dy, dx);
+      const diff = normalizeAngle(targetAngle - en.angle);
+      en.angle += Math.sign(diff) * Math.min(Math.abs(diff), 7.5 * dt);
+
+      const prevX = en.x;
+      const prevY = en.y;
+      const spd = en.speed * speedMult;
+      moveWithCollision(
+        en,
+        Math.cos(targetAngle) * spd,
+        Math.sin(targetAngle) * spd,
+        dt,
+        grid,
+        false
+      );
+
+      if (Math.hypot(en.x - prevX, en.y - prevY) < 0.1) {
+        en.wpIndex = (en.wpIndex + 1) % en.waypoints.length;
+      }
+    }
+  }
+
+  function damagePlayer(amount) {
+    player.hp -= amount;
+    player.invincibleTimer = 0.75;
+    playSound('hit');
+    spawnParticles(player.x, player.y, '#ef4444', 10);
+    if (player.hp <= 0) {
+      player.hp = 0;
+      stats.cleared = false;
+      playSound('gameover');
+      gameState = STATE.RESULT;
+    }
+  }
+
+  // ==========================================
+  // 描画処理
+  // ==========================================
+  function drawTitleScreen(timeSec) {
+    ctx.fillStyle = '#070a0f';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = 'rgba(56, 255, 106, 0.08)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < canvas.width; x += 32) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += 32) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+
+    const cx = canvas.width / 2;
+    const cy = 195;
+    ctx.strokeStyle = 'rgba(56, 255, 106, 0.2)';
+    ctx.beginPath(); ctx.arc(cx, cy, 130, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, 85, 0, Math.PI * 2); ctx.stroke();
+    const sweepAngle = timeSec * 1.8;
+    ctx.strokeStyle = 'rgba(56, 255, 106, 0.55)';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(sweepAngle) * 130, cy + Math.sin(sweepAngle) * 130);
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#38ff6a';
+    ctx.font = 'bold 15px "Courier New", monospace';
+    ctx.fillText('2D TOP-DOWN TACTICAL ESPIONAGE ACTION', cx, 78);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.shadowColor = '#38ff6a';
+    ctx.shadowBlur = 14;
+    ctx.font = 'bold 52px "Courier New", monospace';
+    ctx.fillText('SOLID SHADOW', cx, 136);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 15px "Courier New", monospace';
+    ctx.fillText('- ALL 5 STAGES INFILTRATION MISSION -', cx, 168);
+
+    ctx.fillStyle = 'rgba(22, 27, 36, 0.92)';
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.fillRect(65, 205, 510, 175);
+    ctx.strokeRect(65, 205, 510, 175);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = '13px "Courier New", monospace';
+    const lines = [
+      '【任務】巡回する敵兵の目を盗み、EXITへ到達して全5ステージを制覇せよ！',
+      '・ステージ進行 : EXITに着くと次のステージへ（進むほど敵の数・速度・視野UP）',
+      '・パンチ攻撃   : 背後や側面から殴ると敵兵を一定時間気絶させられる',
+      '・麻酔銃(3発)  : ロック扉をカードキーで解錠すると入手。遠距離から敵を眠らせる',
+      '・段ボール箱   : 被って「静止」している間は敵の視界に入ってもバレない'
+    ];
+    lines.forEach((line, i) => {
+      ctx.fillText(line, 80, 232 + i * 28);
+    });
+
+    if (Math.floor(timeSec * 2.2) % 2 === 0) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38ff6a';
+      ctx.font = 'bold 20px "Courier New", monospace';
+      ctx.fillText('PRESS [SPACE / Z] OR GAMEPAD [A / START]', cx, 425);
+    }
+  }
+
+  function drawStageIntroScreen() {
+    ctx.fillStyle = '#070a0f';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    for (let i = 0; i < 5; i++) {
+      const bx = cx - 140 + i * 60;
+      const by = cy - 90;
+      const isCurrent = i === currentStageIndex;
+      const isPassed = i < currentStageIndex;
+      ctx.fillStyle = isCurrent ? '#38ff6a' : (isPassed ? '#15803d' : '#1e293b');
+      ctx.fillRect(bx, by, 44, 10);
+    }
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#38ff6a';
+    ctx.font = 'bold 16px "Courier New", monospace';
+    ctx.fillText(`INFILTRATION PROGRESS: STAGE ${currentStage.stageNum} / 5`, cx, cy - 52);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 32px "Courier New", monospace';
+    ctx.fillText(currentStage.title, cx, cy - 5);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '14px "Courier New", monospace';
+    ctx.fillText(currentStage.subtitle, cx, cy + 35);
+
+    ctx.fillStyle = '#fde047';
+    ctx.font = '13px "Courier New", monospace';
+    ctx.fillText(`巡回兵: ${currentStage.enemies.length}名  |  警戒レベル: ${'★'.repeat(currentStage.stageNum)}${'☆'.repeat(5 - currentStage.stageNum)}`, cx, cy + 75);
+  }
+
+  function drawPlayingScreen(timeSec) {
+    const grid = currentStage.grid;
+    const isFinalStage = currentStageIndex === STAGE_TEMPLATES.length - 1;
+
+    ctx.fillStyle = alertTimer > 0 ? '#1f1216' : '#141a23';
+    ctx.fillRect(0, 0, COLS * TILE, ROWS * TILE);
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x * TILE, 0); ctx.lineTo(x * TILE, ROWS * TILE); ctx.stroke();
+    }
+    for (let y = 0; y <= ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0, y * TILE); ctx.lineTo(COLS * TILE, y * TILE); ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.setLineDash([4, 6]);
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.14)';
+    ctx.lineWidth = 1.5;
+    currentStage.enemies.forEach(en => {
+      if (en.waypoints.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(en.waypoints[0].x, en.waypoints[0].y);
+      for (let i = 1; i < en.waypoints.length; i++) {
+        ctx.lineTo(en.waypoints[i].x, en.waypoints[i].y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        const ch = grid[y][x];
+        const px = x * TILE;
+        const py = y * TILE;
+
+        if (ch === '#') {
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.fillStyle = '#475569';
+          ctx.fillRect(px + 2, py + 2, TILE - 4, 6);
+          ctx.strokeStyle = '#1e293b';
+          ctx.strokeRect(px, py, TILE, TILE);
+        } else if (ch === 'C') {
+          ctx.fillStyle = '#6b4f2a';
+          ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+          ctx.strokeStyle = '#9c733d';
+          ctx.strokeRect(px + 4, py + 4, TILE - 8, TILE - 8);
+          ctx.beginPath();
+          ctx.moveTo(px + 4, py + 4);
+          ctx.lineTo(px + TILE - 4, py + TILE - 4);
+          ctx.stroke();
+        } else if (ch === 'D') {
+          ctx.fillStyle = '#991b1b';
+          ctx.fillRect(px + 4, py, TILE - 8, TILE);
+          ctx.fillStyle = '#fca5a5';
+          ctx.fillRect(px + 13, py + 4, 6, TILE - 8);
+        } else if (ch === 'G') {
+          const pulse = 0.5 + 0.5 * Math.sin(timeSec * 6);
+          ctx.fillStyle = alertTimer > 0
+            ? 'rgba(239, 68, 68, 0.35)'
+            : `rgba(56, 255, 106, ${0.25 + pulse * 0.35})`;
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.strokeStyle = alertTimer > 0 ? '#ef4444' : '#38ff6a';
+          ctx.strokeRect(px + 2, py + 2, TILE - 4, TILE - 4);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(isFinalStage ? 'GOAL' : 'EXIT', px + TILE / 2, py + TILE / 2 + 3);
+        }
+      }
+    }
+
+    // アイテム描画
+    currentStage.items.forEach(it => {
+      if (it.collected) return;
+      const bob = Math.sin(timeSec * 5) * 2;
+      if (it.type === 'BOX') {
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(it.x - 10, it.y - 8 + bob, 20, 16);
+        ctx.strokeStyle = '#fef3c7';
+        ctx.strokeRect(it.x - 10, it.y - 8 + bob, 20, 16);
+      } else if (it.type === 'CARD') {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(it.x - 9, it.y - 7 + bob, 18, 14);
+        ctx.fillStyle = '#e0f2fe';
+        ctx.fillRect(it.x - 6, it.y - 4 + bob, 12, 4);
+      } else if (it.type === 'RATION') {
+        ctx.fillStyle = '#22c55e';
+        ctx.fillRect(it.x - 9, it.y - 8 + bob, 18, 16);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(it.x - 2, it.y - 5 + bob, 4, 10);
+        ctx.fillRect(it.x - 5, it.y - 2 + bob, 10, 4);
+      }
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(it.label, it.x, it.y - 12 + bob);
+    });
+
+    // 敵兵の視界コーン描画
+    const VISION_DIST = currentStage.visionDist;
+    const VISION_HALF_ANGLE = currentStage.visionHalfAngle;
+    const RAY_STEPS = 22;
+
+    currentStage.enemies.forEach(en => {
+      if (en.stunTimer > 0) return;
+
+      ctx.beginPath();
+      ctx.moveTo(en.x, en.y);
+      for (let i = 0; i <= RAY_STEPS; i++) {
+        const a = en.angle - VISION_HALF_ANGLE + (VISION_HALF_ANGLE * 2 * i) / RAY_STEPS;
+        const d = castVisionRay(grid, en.x, en.y, a, VISION_DIST);
+        ctx.lineTo(en.x + Math.cos(a) * d, en.y + Math.sin(a) * d);
+      }
+      ctx.closePath();
+      ctx.fillStyle = alertTimer > 0
+        ? 'rgba(255, 56, 56, 0.27)'
+        : 'rgba(250, 204, 21, 0.18)';
+      ctx.fill();
+    });
+
+    // 敵兵本体の描画
+    const isElite = currentStage.stageNum >= 4;
+    currentStage.enemies.forEach(en => {
+      ctx.save();
+      ctx.translate(en.x, en.y);
+
+      if (en.stunTimer > 0) {
+        ctx.fillStyle = en.isAsleep ? '#334155' : '#64748b';
+        ctx.beginPath();
+        ctx.arc(0, 0, 11, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (en.isAsleep) {
+          // 麻酔睡眠中は「Zzz」エフェクト
+          const floatY = (timeSec * 14) % 12;
+          ctx.fillStyle = '#38bdf8';
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText('Zzz', 8, -10 - floatY);
+        } else {
+          // パンチ気絶中は回転する星
+          for (let s = 0; s < 3; s++) {
+            const sa = timeSec * 5 + (s * Math.PI * 2) / 3;
+            ctx.fillStyle = '#fde047';
+            ctx.fillRect(Math.cos(sa) * 10 - 2, Math.sin(sa) * 6 - 14, 4, 4);
+          }
+        }
+      } else {
+        ctx.rotate(en.angle);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(4, 3, 12, 4);
+        ctx.fillStyle = alertTimer > 0 ? '#dc2626' : (isElite ? '#f97316' : '#84cc16');
+        ctx.beginPath();
+        ctx.arc(0, 0, 11, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = alertTimer > 0 ? '#7f1d1d' : (isElite ? '#7c2d12' : '#3f6212');
+        ctx.beginPath();
+        ctx.arc(-1, 0, 7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      if (en.surpriseTimer > 0 && en.stunTimer <= 0) {
+        ctx.fillStyle = '#ff3838';
+        ctx.font = 'bold 22px Impact, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', en.x, en.y - 16);
+      }
+    });
+
+    // プレイヤー描画
+    if (player.invincibleTimer <= 0 || Math.floor(timeSec * 16) % 2 === 0) {
+      ctx.save();
+      ctx.translate(player.x, player.y);
+
+      if (player.inBox) {
+        ctx.fillStyle = '#d97706';
+        ctx.fillRect(-12, -11, 24, 22);
+        ctx.strokeStyle = '#fef3c7';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-12, -11, 24, 22);
+        ctx.fillStyle = '#78350f';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('C.BOX', 0, 3);
+      } else {
+        ctx.rotate(player.angle);
+
+        // 麻酔銃を所持している場合はサプレッサー付きハンドガンを描画
+        if (player.hasTranq) {
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(5, 3, 11, 3);
+          ctx.fillStyle = '#0284c7';
+          ctx.fillRect(14, 3.5, 4, 2);
+        }
+
+        if (player.punchTimer > 0) {
+          ctx.fillStyle = '#fde047';
+          ctx.beginPath();
+          ctx.arc(16, 4, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.arc(1, 0, 6.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#38ff6a';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-5, -4);
+        ctx.lineTo(-13, -7 + Math.sin(timeSec * 12) * 2);
+        ctx.moveTo(-5, 4);
+        ctx.lineTo(-13, 7 + Math.cos(timeSec * 12) * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // 麻酔ダーツ描画
+    tranqDarts.forEach(d => {
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.angle);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(-6, -1.5, 12, 3);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(4, -1, 3, 2);
+      ctx.restore();
+    });
+
+    // 敵弾丸描画
+    ctx.fillStyle = '#fde047';
+    bullets.forEach(b => {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // パーティクル描画
+    particles.forEach(p => {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+    });
+
+    // 上部ステージ情報バー
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.fillRect(0, 0, canvas.width, 24);
+    ctx.fillStyle = '#38ff6a';
+    ctx.font = 'bold 12px "Courier New", monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${currentStage.title}  [${currentStage.stageNum}/5]`, 10, 16);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fde047';
+    ctx.fillText(`GUARDS: ${currentStage.enemies.length}`, canvas.width - 10, 16);
+
+    // ガイドメッセージ表示
+    if (messageTimer > 0) {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.strokeStyle = '#38ff6a';
+      ctx.lineWidth = 1;
+      ctx.fillRect(20, ROWS * TILE - 34, canvas.width - 40, 26);
+      ctx.strokeRect(20, ROWS * TILE - 34, canvas.width - 40, 26);
+      ctx.fillStyle = '#f8fafc';
+      ctx.font = '12px "Courier New", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(messageText, canvas.width / 2, ROWS * TILE - 17);
+    }
+
+    // ==========================================
+    // 下部HUD
+    // ==========================================
+    const hudY = ROWS * TILE;
+    ctx.fillStyle = '#090d14';
+    ctx.fillRect(0, hudY, canvas.width, HUD_HEIGHT);
+    ctx.strokeStyle = '#334155';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, hudY);
+    ctx.lineTo(canvas.width, hudY);
+    ctx.stroke();
+
+    // LIFEゲージ
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = 'bold 13px "Courier New", monospace';
+    ctx.fillText('LIFE', 12, hudY + 24);
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(54, hudY + 12, 136, 14);
+    const hpRatio = player.hp / player.maxHp;
+    ctx.fillStyle = hpRatio > 0.35 ? '#38ff6a' : '#ff3838';
+    ctx.fillRect(54, hudY + 12, 136 * hpRatio, 14);
+    ctx.strokeStyle = '#64748b';
+    ctx.strokeRect(54, hudY + 12, 136, 14);
+
+    // 経過時間・ステージ表示
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '11px "Courier New", monospace';
+    ctx.fillText(`STG:${currentStage.stageNum}/5 ${formatTime(stats.time)} ALT:${stats.alerts}`, 12, hudY + 48);
+
+    // 装備・麻酔銃・カード表示
+    drawEquipmentBox(
+      214, hudY + 10, 76, 44,
+      'C.BOX',
+      player.hasBox ? (player.inBox ? 'EQUIP' : 'READY') : 'NONE',
+      player.inBox
+    );
+    drawEquipmentBox(
+      296, hudY + 10, 82, 44,
+      'TRANQ GUN',
+      player.hasTranq ? `${player.tranqAmmo} / ${player.maxTranqAmmo}` : 'NONE',
+      player.hasTranq && player.tranqAmmo > 0
+    );
+    drawEquipmentBox(
+      384, hudY + 10, 76, 44,
+      'KEY',
+      currentStage.hasDoorInStage ? (player.hasCard ? 'HAVE' : 'NEED') : 'OPEN',
+      player.hasCard
+    );
+
+    // ALERT / STEALTH モニター
+    ctx.fillStyle = alertTimer > 0 ? '#450a0a' : '#0f291e';
+    ctx.strokeStyle = alertTimer > 0 ? '#ff3838' : '#38ff6a';
+    ctx.lineWidth = 2;
+    ctx.fillRect(472, hudY + 10, 156, 44);
+    ctx.strokeRect(472, hudY + 10, 156, 44);
+
+    ctx.textAlign = 'center';
+    if (alertTimer > 0) {
+      ctx.fillStyle = '#ff3838';
+      ctx.font = 'bold 15px "Courier New", monospace';
+      ctx.fillText(`! ALERT ${alertTimer.toFixed(1)}s`, 550, hudY + 37);
+    } else {
+      ctx.fillStyle = '#38ff6a';
+      ctx.font = 'bold 14px "Courier New", monospace';
+      ctx.fillText('STATUS: STEALTH', 550, hudY + 37);
+    }
+  }
+
+  function drawEquipmentBox(x, y, w, h, title, status, active) {
+    ctx.fillStyle = active ? 'rgba(56, 189, 248, 0.18)' : '#111827';
+    ctx.strokeStyle = active ? '#38bdf8' : '#334155';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '9.5px "Courier New", monospace';
+    ctx.fillText(title, x + w / 2, y + 15);
+
+    ctx.fillStyle = active ? '#38bdf8' : '#e2e8f0';
+    ctx.font = 'bold 12px "Courier New", monospace';
+    ctx.fillText(status, x + w / 2, y + 34);
+  }
+
+  function drawResultScreen(timeSec) {
+    ctx.fillStyle = '#070a0f';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cx = canvas.width / 2;
+    ctx.textAlign = 'center';
+
+    if (stats.cleared) {
+      ctx.fillStyle = '#38ff6a';
+      ctx.font = 'bold 38px "Courier New", monospace';
+      ctx.fillText('ALL 5 STAGES ACCOMPLISHED!', cx, 78);
+    } else {
+      ctx.fillStyle = '#ff3838';
+      ctx.font = 'bold 42px "Courier New", monospace';
+      ctx.fillText('MISSION FAILED', cx, 78);
+    }
+
+    let rank = 'E (FAILED)';
+    let codeName = 'ROOKIE';
+    if (stats.cleared) {
+      let score = 100;
+      score -= stats.alerts * 18;
+      if (stats.time > 140) score -= Math.floor((stats.time - 140) * 0.35);
+      score -= (100 - player.hp) * 0.15;
+
+      if (stats.alerts === 0 && stats.time <= 165) {
+        rank = 'S';
+        codeName = 'BIG BOSS (伝説の傭兵)';
+      } else if (score >= 82) {
+        rank = 'A';
+        codeName = 'FOXHOUND (完全隠密工作員)';
+      } else if (score >= 60) {
+        rank = 'B';
+        codeName = 'PANTHER (熟練工作員)';
+      } else {
+        rank = 'C';
+        codeName = 'JACKAL (任務完遂者)';
+      }
+    }
+
+    ctx.fillStyle = '#111827';
+    ctx.strokeStyle = stats.cleared ? '#38ff6a' : '#ff3838';
+    ctx.lineWidth = 2;
+    ctx.fillRect(95, 108, 450, 265);
+    ctx.strokeRect(95, 108, 450, 265);
+
+    ctx.textAlign = 'left';
+    ctx.font = '16px "Courier New", monospace';
+    const rows = [
+      ['REACHED STAGE', stats.cleared ? 'ALL CLEAR (5 / 5)' : `STAGE ${stats.reachedStage} / 5`],
+      ['TOTAL TIME', formatTime(stats.time)],
+      ['ALERT COUNT (発見回数)', `${stats.alerts} 回`],
+      ['NEUTRALIZED (無力化した敵)', `${stats.knockouts} 人`],
+      ['REMAINING LIFE', `${player.hp} / ${player.maxHp}`],
+      ['CODENAME', codeName]
+    ];
+
+    rows.forEach((r, idx) => {
+      const ry = 145 + idx * 31;
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(r[0], 120, ry);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(r[1], 520, ry);
+      ctx.textAlign = 'left';
+    });
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 24px "Courier New", monospace';
+    ctx.fillText(`RANK: ${rank}`, cx, 352);
+
+    if (Math.floor(timeSec * 2.2) % 2 === 0) {
+      ctx.fillStyle = '#38ff6a';
+      ctx.font = 'bold 18px "Courier New", monospace';
+      ctx.fillText('PRESS [SPACE / Z] OR GAMEPAD [A / START] TO TITLE', cx, 428);
+    }
+  }
+
+  function formatTime(sec) {
+    const mins = Math.floor(sec / 60);
+    const secs = Math.floor(sec % 60);
+    const ms = Math.floor((sec % 1) * 100);
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(ms).padStart(2, '0')}`;
+  }
+
+  // ==========================================
+  // メインゲームループ
+  // ==========================================
+  let lastTimestamp = performance.now();
+  let resultInputCooldown = 0;
+
+  function gameLoop(timestamp) {
+    const dt = Math.min(0.05, (timestamp - lastTimestamp) / 1000);
+    lastTimestamp = timestamp;
+    const timeSec = timestamp / 1000;
+
+    pollInput();
+
+    if (gameState === STATE.TITLE) {
+      if (input.actionJustPressed || input.startJustPressed) {
+        playSound('item');
+        startNewGame();
+      }
+      drawTitleScreen(timeSec);
+    } else if (gameState === STATE.STAGE_INTRO) {
+      stageIntroTimer -= dt;
+      if (stageIntroTimer <= 0 || input.actionJustPressed || input.startJustPressed) {
+        gameState = STATE.PLAYING;
+      }
+      drawStageIntroScreen();
+    } else if (gameState === STATE.PLAYING) {
+      updatePlaying(dt);
+      if (gameState === STATE.RESULT) {
+        resultInputCooldown = 0.6;
+      }
+      if (gameState === STATE.STAGE_INTRO) {
+        drawStageIntroScreen();
+      } else if (gameState === STATE.PLAYING) {
+        drawPlayingScreen(timeSec);
+      } else {
+        drawResultScreen(timeSec);
+      }
+    } else if (gameState === STATE.RESULT) {
+      if (resultInputCooldown > 0) resultInputCooldown -= dt;
+      if (resultInputCooldown <= 0 && (input.actionJustPressed || input.startJustPressed)) {
+        playSound('box');
+        gameState = STATE.TITLE;
+      }
+      drawResultScreen(timeSec);
+    }
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
